@@ -1,10 +1,10 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-    process::Command,
-};
-
-fn main() {
+#[cfg(not(target_os = "windows"))]
+fn gen_bindings() {
+    use std::{
+        env,
+        path::{Path, PathBuf},
+        process::Command,
+    };
     println!("cargo:rerun-if-changed=wrapper.h");
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
@@ -40,4 +40,9 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+fn main() {
+    #[cfg(not(target_os = "windows"))]
+    gen_bindings();
 }
