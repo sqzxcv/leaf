@@ -1,28 +1,57 @@
-use std::{
-    ffi,
-    io::{self, Write},
-    ptr,
-};
+use std::io::{self, Write};
 
 use bytes::BytesMut;
 use log::{Level, Metadata, Record};
 
-use super::ios::{asl_log, ASL_LEVEL_NOTICE};
-
-fn log_out(data: &[u8]) {
-    unsafe {
-        let s = match ffi::CString::new(data) {
-            Ok(s) => s,
-            Err(_) => return,
+#[cfg(target_os = "ios")]
+mod platform_log {
+    fn log_out(data: &[u8]) {
+        use super::ios::{asl_log, ASL_LEVEL_NOTICE};
+        use std::{ffi, ptr};
+        unsafe {
+            let s = match ffi::CString::new(data) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            asl_log(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ASL_LEVEL_NOTICE as i32,
+                // ffi::CString::new("%s").unwrap().as_c_str().as_ptr(),
+                s.as_c_str().as_ptr(),
+            )
         };
-        asl_log(
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ASL_LEVEL_NOTICE as i32,
-            // ffi::CString::new("%s").unwrap().as_c_str().as_ptr(),
-            s.as_c_str().as_ptr(),
-        )
-    };
+    }
+
+    fn log_text(text: &str) {
+        log_out(text);
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod platform_log {
+    extern "system" {
+        fn OutputDebugStringW(lp_output_string: *const u16);
+        fn GetTickCount() -> u64;
+    }
+    pub fn log_text(text: &str) {
+        use std::{ffi::OsStr, os::windows::prelude::OsStrExt};
+        let mut bytes: Vec<_> =
+            unsafe { OsStr::new(GetTickCount().to_string().as_str()).encode_wide() }.collect(); //Vec::with_capacity(text.len() + 12);
+        bytes.reserve(text.len() + 12);
+        bytes.extend(OsStr::new(text).encode_wide());
+        bytes.extend_from_slice(&[13, 10, 0]);
+        unsafe { OutputDebugStringW(bytes.as_ptr()) };
+    }
+    pub fn log_out(data: &[u8]) {
+        log_text(String::from_utf8_lossy(data).as_ref());
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "windows")))]
+mod platform_log {
+    fn log_out(_data: &[u8]) {}
+    fn log_text(_text: &str) {}
 }
 
 pub struct ConsoleLogger;
@@ -34,14 +63,14 @@ impl log::Log for ConsoleLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            log_out(
+            platform_log::log_text(
                 format!(
                     "[{}] [{}] {}",
                     record.level(),
                     record.target(),
                     record.args()
                 )
-                .as_bytes(),
+                .as_str(),
             )
         }
     }
@@ -51,13 +80,11 @@ impl log::Log for ConsoleLogger {
 
 pub struct ConsoleWriter(pub BytesMut);
 
-unsafe impl Send for ConsoleWriter {}
-
 impl Write for ConsoleWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.extend_from_slice(buf);
         if let Some(i) = memchr::memchr(b'\n', &self.0) {
-            log_out(&self.0[..i]);
+            platform_log::log_out(&self.0[..i]);
             let _ = self.0.split_to(i + 1);
         }
         Ok(buf.len())
