@@ -109,6 +109,8 @@ bytes = "0.5"
 lazy_static = "1.4.0"
 anyhow = "1.0"
 rand = "0.7"
+# Enable `std` for indexmap
+indexmap = { version = "=1.6.1", features = ["std"] }
 
 # config-json
 serde_json = { version = "1.0", features = ["raw_value"], optional = true }

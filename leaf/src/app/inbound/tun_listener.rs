@@ -22,7 +22,7 @@ impl InboundListener for TUNInboundListener {
             self.dispatcher.clone(),
             self.nat_manager.clone(),
         ) {
-            runners.push(Box::pin(r));
+            runners.push(r);
         }
         runners
     }
