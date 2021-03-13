@@ -24,7 +24,7 @@ mod platform_log {
     }
 
     pub fn log_text(text: &str) {
-        log_out(text);
+        log_out(text.as_bytes());
     }
 }
 
