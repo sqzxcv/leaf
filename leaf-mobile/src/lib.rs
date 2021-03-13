@@ -20,8 +20,10 @@ static INIT_LOG: Once = Once::new();
 
 #[no_mangle]
 pub extern "system" fn run_leaf(path: *const c_char, bind_host: *const c_char) -> *mut Runtime {
-    if let Ok(path) = unsafe { CStr::from_ptr(path).to_str() } {
-        let mut config = leaf::config::from_file(path).expect("read config failed");
+    if let Ok(mut config) = unsafe { CStr::from_ptr(path).to_str() }
+        .map_err(Into::into)
+        .and_then(leaf::config::from_file)
+    {
         if !bind_host.is_null() {
             let bind_host = unsafe { CStr::from_ptr(bind_host).to_str().unwrap().to_string() };
             for dns in config.dns.mut_iter() {
