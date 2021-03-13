@@ -5,8 +5,8 @@ use log::{Level, Metadata, Record};
 
 #[cfg(target_os = "ios")]
 mod platform_log {
-    fn log_out(data: &[u8]) {
-        use super::ios::{asl_log, ASL_LEVEL_NOTICE};
+    pub fn log_out(data: &[u8]) {
+        use crate::ios::{asl_log, ASL_LEVEL_NOTICE};
         use std::{ffi, ptr};
         unsafe {
             let s = match ffi::CString::new(data) {
@@ -23,7 +23,7 @@ mod platform_log {
         };
     }
 
-    fn log_text(text: &str) {
+    pub fn log_text(text: &str) {
         log_out(text);
     }
 }
