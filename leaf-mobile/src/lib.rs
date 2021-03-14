@@ -1,3 +1,5 @@
+#[cfg(target_vendor = "uwp")]
+use std::ffi::CString;
 use std::{ffi::CStr, os::raw::c_char, ptr::null_mut, sync::Once};
 
 use bytes::BytesMut;
@@ -19,7 +21,11 @@ static INIT_LOG: Once = Once::new();
 // use ios::os_proc_available_memory;
 
 #[no_mangle]
-pub extern "system" fn run_leaf(path: *const c_char, bind_host: *const c_char) -> *mut Runtime {
+pub extern "system" fn run_leaf(
+    path: *const c_char,
+    bind_host: *const c_char,
+    on_dns: extern "system" fn(dns: *const c_char),
+) -> *mut Runtime {
     if let Ok(mut config) = unsafe { CStr::from_ptr(path).to_str() }
         .map_err(Into::into)
         .and_then(leaf::config::from_file)
@@ -27,6 +33,10 @@ pub extern "system" fn run_leaf(path: *const c_char, bind_host: *const c_char) -
         if !bind_host.is_null() {
             let bind_host = unsafe { CStr::from_ptr(bind_host).to_str().unwrap().to_string() };
             for dns in config.dns.mut_iter() {
+                dns.servers
+                    .iter()
+                    .map(|s| CString::new(&**s).unwrap())
+                    .for_each(|cs| on_dns(cs.as_ptr()));
                 dns.bind = bind_host.clone();
             }
             for outbound in config.outbounds.iter_mut() {
