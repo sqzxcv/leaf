@@ -8,7 +8,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use futures::stream::StreamExt;
 use log::*;
 use protobuf::Message;
 use std::sync::Once;
@@ -199,7 +198,7 @@ pub fn new(
                 let mut receiver_info = get_receiver_info().lock().unwrap();
                 receiver_info.take_tun_rx().unwrap()
             };
-            while let Some(packet) = tun_rx.next().await {
+            while let Some(packet) = tun_rx.recv().await {
                 match stack_writer.write(&packet).await {
                     Ok(_) => (),
                     Err(e) => {

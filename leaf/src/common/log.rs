@@ -2,7 +2,7 @@ pub fn setup_logger(loglevel: log::LevelFilter) -> fern::Dispatch {
     fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(
-                #[cfg(any(target_os = "ios", target_os = "android"))]
+                #[cfg(any(target_os = "ios", target_os = "android", target_vendor = "uwp"))]
                 {
                     format_args!(
                         "[{date}][{level}] {message}",
@@ -11,7 +11,7 @@ pub fn setup_logger(loglevel: log::LevelFilter) -> fern::Dispatch {
                         message = message,
                     )
                 },
-                #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                #[cfg(not(any(target_os = "ios", target_os = "android", target_vendor = "uwp")))]
                 {
                     use fern::colors::{Color, ColoredLevelConfig};
                     let colors_line = ColoredLevelConfig::new()

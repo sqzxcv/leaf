@@ -21,10 +21,6 @@ mod platform_log {
             )
         };
     }
-
-    pub fn log_text(text: &str) {
-        log_out(text.as_bytes());
-    }
 }
 
 #[cfg(target_os = "android")]
@@ -43,10 +39,6 @@ mod platform_log {
             );
         }
     }
-
-    pub fn log_text(text: &str) {
-        log_out(text.as_bytes());
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -61,7 +53,7 @@ mod platform_log {
             unsafe { OsStr::new(GetTickCount().to_string().as_str()).encode_wide() }.collect(); //Vec::with_capacity(text.len() + 12);
         bytes.reserve(text.len() + 12);
         bytes.extend(OsStr::new(text).encode_wide());
-        bytes.extend_from_slice(&[13, 10, 0]);
+        bytes.extend_from_slice(&[0]);
         unsafe { OutputDebugStringW(bytes.as_ptr()) };
     }
     pub fn log_out(data: &[u8]) {
@@ -72,29 +64,6 @@ mod platform_log {
 #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "windows")))]
 mod platform_log {
     fn log_out(_data: &[u8]) {}
-    fn log_text(_text: &str) {}
-}
-
-pub struct ConsoleLogger;
-
-impl log::Log for ConsoleLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Debug
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            platform_log::log_text(
-                format!(
-                    "[{}] [{}] {}",
-                    record.level(),
-                    record.target(),
-                    record.args()
-                )
-                .as_str(),
-            )
-        }
-    }
 }
 
 pub struct ConsoleWriter(pub BytesMut);
@@ -110,6 +79,9 @@ unsafe impl Send for ConsoleWriter {}
 impl Write for ConsoleWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.extend_from_slice(buf);
+        #[cfg(target_vendor = "uwp")]
+        platform_log::log_out(&self.0[..]);
+        #[cfg(not(target_vendor = "uwp"))]
         if let Some(i) = memchr::memchr(b'\n', &self.0) {
             platform_log::log_out(&self.0[..i]);
             let _ = self.0.split_to(i + 1);

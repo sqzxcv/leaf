@@ -13,7 +13,7 @@ use crate::{
     Runner,
 };
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", target_vendor = "uwp"))]
 use super::mobile;
 use super::{common, config};
 
@@ -44,7 +44,7 @@ pub fn prepare(config: config::Config) -> Result<Vec<Runner>> {
     if let Some(log) = config.log.as_ref() {
         match log.output {
             config::Log_Output::CONSOLE => {
-                #[cfg(any(target_os = "ios", target_os = "android"))]
+                #[cfg(any(target_os = "ios", target_os = "android", target_vendor = "uwp"))]
                 {
                     let console_output = fern::Output::writer(
                         Box::new(mobile::logger::ConsoleWriter::default()),
