@@ -51,7 +51,7 @@ pub struct Proxy {
     // shadowsocks, trojan
     pub password: Option<String>,
 
-    // vmess, vless
+    // vmess
     pub username: Option<String>,
     pub ws: Option<bool>,
     pub tls: Option<bool>,
@@ -64,6 +64,8 @@ pub struct Proxy {
     pub amux: Option<bool>,
     pub amux_max: Option<i32>,
     pub amux_con: Option<i32>,
+
+    pub quic: Option<bool>,
 }
 
 impl Default for Proxy {
@@ -85,6 +87,7 @@ impl Default for Proxy {
             amux: Some(false),
             amux_max: Some(8),
             amux_con: Some(2),
+            quic: Some(false),
         }
     }
 }
@@ -171,14 +174,13 @@ where
 {
     let mut new_lines = Vec::new();
     let mut curr_sect: String = "".to_string();
-    for line in lines.flatten() {
+    for line in lines.flatten().map(|x| x.trim()) {
         let line = remove_comments(line);
         if let Some(s) = get_section(line.as_ref()) {
             curr_sect = s.to_string();
             continue;
         }
         if curr_sect.as_str() == section {
-            let line = line.trim();
             if !line.is_empty() {
                 new_lines.push(line.to_string());
             }
@@ -191,8 +193,7 @@ fn get_char_sep_slice(text: &str, pat: char) -> Option<Vec<String>>
 where
 {
     let mut items = Vec::new();
-    for item in text.trim().split(pat) {
-        let item = item.trim();
+    for item in text.split(pat).map(str::trim) {
         if !item.is_empty() {
             items.push(item.to_string());
         }
@@ -205,9 +206,8 @@ where
 }
 
 fn get_string(text: &str) -> Option<String> {
-    let s = text.trim();
-    if !s.is_empty() {
-        Some(s.to_string())
+    if !text.is_empty() {
+        Some(text.to_string())
     } else {
         None
     }
@@ -217,8 +217,8 @@ fn get_value<T>(text: &str) -> Option<T>
 where
     T: std::str::FromStr,
 {
-    if !text.trim().is_empty() {
-        if let Ok(v) = text.trim().parse::<T>() {
+    if !text.is_empty() {
+        if let Ok(v) = text.parse::<T>() {
             return Some(v);
         }
     }
@@ -229,11 +229,11 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
     let mut general = General::default();
     let general_lines = get_lines_by_section("General", lines.iter()).unwrap();
     for line in general_lines {
-        let parts: Vec<&str> = line.split('=').collect();
+        let parts: Vec<&str> = line.split('=').map(str::trim).collect();
         if parts.len() != 2 {
             continue;
         }
-        match parts[0].trim() {
+        match parts[0] {
             "tun-fd" => {
                 general.tun_fd = get_value::<i32>(parts[1]);
             }
@@ -253,7 +253,7 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
                 }
             }
             "loglevel" => {
-                general.loglevel = Some(parts[1].trim().to_string());
+                general.loglevel = Some(parts[1].to_string());
             }
             "dns-server" => {
                 general.dns_server = get_char_sep_slice(parts[1], ',');
@@ -266,6 +266,9 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
             }
             "always-fake-ip" => {
                 general.always_fake_ip = get_char_sep_slice(parts[1], ',');
+            }
+            "routing-domain-resolve" => {
+                std::env::set_var("ROUTING_DOMAIN_RESOLVE", parts[1]);
             }
             "interface" => {
                 general.interface = get_string(parts[1]);
@@ -286,12 +289,12 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
     let mut proxies = Vec::new();
     let proxy_lines = get_lines_by_section("Proxy", lines.iter()).unwrap();
     for line in proxy_lines {
-        let parts: Vec<&str> = line.splitn(2, '=').collect();
+        let parts: Vec<&str> = line.splitn(2, '=').map(str::trim).collect();
         if parts.len() != 2 {
             continue;
         }
         let mut proxy = Proxy::default();
-        let tag = parts[0].trim();
+        let tag = parts[0];
         if tag.is_empty() {
             // empty tag is not allowed
             continue;
@@ -311,12 +314,12 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
         // extract key-value params
         // let params = &params[2..];
         for param in &params {
-            let parts: Vec<&str> = param.split('=').collect();
+            let parts: Vec<&str> = param.split('=').map(str::trim).collect();
             if parts.len() != 2 {
                 continue;
             }
-            let k = parts[0].trim();
-            let v = parts[1].trim();
+            let k = parts[0];
+            let v = parts[1];
             if k.is_empty() || v.is_empty() {
                 continue;
             }
@@ -358,6 +361,7 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
                     };
                     proxy.amux_con = i;
                 }
+                "quic" => proxy.quic = if v == "true" { Some(true) } else { Some(false) },
                 "interface" => {
                     proxy.interface = v.to_string();
                 }
@@ -409,12 +413,12 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
     let mut proxy_groups = Vec::new();
     let proxy_group_lines = get_lines_by_section("Proxy Group", lines.iter()).unwrap();
     for line in proxy_group_lines {
-        let parts: Vec<&str> = line.splitn(2, '=').collect();
+        let parts: Vec<&str> = line.splitn(2, '=').map(str::trim).collect();
         if parts.len() != 2 {
             continue;
         }
         let mut group = ProxyGroup::default();
-        let tag = parts[0].trim();
+        let tag = parts[0];
         if tag.is_empty() {
             // empty tag is not allowed
             continue;
@@ -440,9 +444,8 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
         let mut actors = Vec::new();
         for param in params {
             if !param.contains('=') {
-                let actor = param.trim();
-                if !actor.is_empty() {
-                    actors.push(actor.to_string());
+                if !param.is_empty() {
+                    actors.push(param.to_string());
                 }
             }
         }
@@ -454,12 +457,12 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
 
         for param in params {
             if param.contains('=') {
-                let parts: Vec<&str> = param.split('=').collect();
+                let parts: Vec<&str> = param.split('=').map(str::trim).collect();
                 if parts.len() != 2 {
                     continue;
                 }
-                let k = parts[0].trim();
-                let v = parts[1].trim();
+                let k = parts[0];
+                let v = parts[1];
                 if k.is_empty() || v.is_empty() {
                     continue;
                 }
@@ -587,15 +590,15 @@ pub fn from_lines(lines: Vec<io::Result<String>>) -> Result<Config> {
     let mut hosts = HashMap::new();
     let host_lines = get_lines_by_section("Host", lines.iter()).unwrap();
     for line in host_lines {
-        let parts: Vec<&str> = line.split('=').collect();
+        let parts: Vec<&str> = line.split('=').map(str::trim).collect();
         if parts.len() != 2 {
             continue;
         }
-        let name = parts[0].trim();
+        let name = parts[0];
         let ips: Vec<String> = parts[1]
-            .trim()
             .split(',')
-            .map(|x| x.trim().to_owned())
+            .map(str::trim)
+            .map(|x| x.to_owned())
             .collect();
         hosts.insert(name.to_owned(), ips);
     }
@@ -811,6 +814,24 @@ pub fn to_internal(conf: Config) -> Result<internal::Config> {
                     amux_outbound.bind = ext_proxy.interface.clone();
                     amux_outbound.protocol = "amux".to_string();
                     amux_outbound.tag = format!("{}_amux_xxx", ext_proxy.tag.clone());
+                    // quic
+                    let mut quic_outbound = internal::Outbound::new();
+                    quic_outbound.tag = ext_proxy.tag.clone();
+                    let mut quic_settings = internal::QuicOutboundSettings::new();
+                    if let Some(ext_address) = &ext_proxy.address {
+                        quic_settings.address = ext_address.clone();
+                    }
+                    if let Some(ext_port) = &ext_proxy.port {
+                        quic_settings.port = *ext_port as u32;
+                    }
+                    if let Some(ext_sni) = &ext_proxy.sni {
+                        quic_settings.server_name = ext_sni.clone();
+                    }
+                    let quic_settings = quic_settings.write_to_bytes().unwrap();
+                    quic_outbound.settings = quic_settings;
+                    quic_outbound.bind = ext_proxy.interface.clone();
+                    quic_outbound.protocol = "quic".to_string();
+                    quic_outbound.tag = format!("{}_quic_xxx", ext_proxy.tag.clone());
 
                     // plain trojan
                     let mut settings = internal::TrojanOutboundSettings::new();
@@ -835,6 +856,8 @@ pub fn to_internal(conf: Config) -> Result<internal::Config> {
                     let mut chain_settings = internal::ChainOutboundSettings::new();
                     if ext_proxy.amux.unwrap() {
                         chain_settings.actors.push(amux_outbound.tag.clone());
+                    } else if ext_proxy.quic.unwrap() {
+                        chain_settings.actors.push(quic_outbound.tag.clone());
                     } else {
                         chain_settings.actors.push(tls_outbound.tag.clone());
                         if ext_proxy.ws.unwrap() {
@@ -853,7 +876,11 @@ pub fn to_internal(conf: Config) -> Result<internal::Config> {
                     if ext_proxy.amux.unwrap() {
                         outbounds.push(amux_outbound);
                     }
-                    outbounds.push(tls_outbound);
+                    if ext_proxy.quic.unwrap() {
+                        outbounds.push(quic_outbound);
+                    } else {
+                        outbounds.push(tls_outbound);
+                    }
                     if ext_proxy.ws.unwrap() {
                         outbounds.push(ws_outbound);
                     }
@@ -916,86 +943,6 @@ pub fn to_internal(conf: Config) -> Result<internal::Config> {
                     let settings = settings.write_to_bytes().unwrap();
                     outbound.settings = settings;
                     outbound.tag = format!("{}_vmess_xxx", ext_proxy.tag.clone());
-
-                    // chain
-                    let mut chain_outbound = internal::Outbound::new();
-                    chain_outbound.tag = ext_proxy.tag.clone();
-                    let mut chain_settings = internal::ChainOutboundSettings::new();
-                    if ext_proxy.tls.unwrap() {
-                        chain_settings.actors.push(tls_outbound.tag.clone());
-                    }
-                    if ext_proxy.ws.unwrap() {
-                        chain_settings.actors.push(ws_outbound.tag.clone());
-                    }
-                    chain_settings.actors.push(outbound.tag.clone());
-                    let chain_settings = chain_settings.write_to_bytes().unwrap();
-                    chain_outbound.settings = chain_settings;
-                    chain_outbound.bind = ext_proxy.interface.clone();
-                    chain_outbound.protocol = "chain".to_string();
-
-                    // always push chain first, in case there isn't final rule,
-                    // the chain outbound will be the default one to use
-                    outbounds.push(chain_outbound);
-                    if ext_proxy.tls.unwrap() {
-                        outbounds.push(tls_outbound);
-                    }
-                    if ext_proxy.ws.unwrap() {
-                        outbounds.push(ws_outbound);
-                    }
-                    outbounds.push(outbound);
-                }
-                "vless" => {
-                    // tls
-                    let mut tls_outbound = internal::Outbound::new();
-                    tls_outbound.protocol = "tls".to_string();
-                    tls_outbound.bind = ext_proxy.interface.clone();
-                    let mut tls_settings = internal::TlsOutboundSettings::new();
-                    if let Some(ext_sni) = &ext_proxy.sni {
-                        tls_settings.server_name = ext_sni.clone();
-                    }
-                    let tls_settings = tls_settings.write_to_bytes().unwrap();
-                    tls_outbound.settings = tls_settings;
-                    tls_outbound.tag = format!("{}_tls_xxx", ext_proxy.tag.clone());
-
-                    // ws
-                    let mut ws_outbound = internal::Outbound::new();
-                    ws_outbound.protocol = "ws".to_string();
-                    ws_outbound.bind = ext_proxy.interface.clone();
-                    let mut ws_settings = internal::WebSocketOutboundSettings::new();
-                    if let Some(ext_ws_path) = &ext_proxy.ws_path {
-                        ws_settings.path = ext_ws_path.clone();
-                    } else {
-                        ws_settings.path = "/".to_string();
-                    }
-                    if let Some(ext_ws_host) = &ext_proxy.ws_host {
-                        let mut headers = HashMap::new();
-                        headers.insert("Host".to_string(), ext_ws_host.clone());
-                        ws_settings.headers = headers;
-                    }
-                    let ws_settings = ws_settings.write_to_bytes().unwrap();
-                    ws_outbound.settings = ws_settings;
-                    ws_outbound.tag = format!("{}_ws_xxx", ext_proxy.tag.clone());
-
-                    // vless
-                    let mut settings = internal::VLessOutboundSettings::new();
-                    if ext_proxy.address.is_none()
-                        || ext_proxy.port.is_none()
-                        || ext_proxy.username.is_none()
-                    {
-                        return Err(anyhow!("invalid vless outbound settings"));
-                    }
-                    if let Some(ext_address) = &ext_proxy.address {
-                        settings.address = ext_address.clone();
-                    }
-                    if let Some(ext_port) = &ext_proxy.port {
-                        settings.port = *ext_port as u32;
-                    }
-                    if let Some(ext_username) = &ext_proxy.username {
-                        settings.uuid = ext_username.clone();
-                    }
-                    let settings = settings.write_to_bytes().unwrap();
-                    outbound.settings = settings;
-                    outbound.tag = format!("{}_vless_xxx", ext_proxy.tag.clone());
 
                     // chain
                     let mut chain_outbound = internal::Outbound::new();
@@ -1263,8 +1210,7 @@ pub fn from_file<P>(path: P) -> Result<internal::Config>
 where
     P: AsRef<Path>,
 {
-    let lines = read_lines(path)?;
-    let lines = lines.collect();
+    let lines = read_lines(path)?.collect();
     let config = from_lines(lines)?;
     to_internal(config)
 }

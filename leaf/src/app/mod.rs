@@ -7,6 +7,7 @@ pub mod router;
 
 #[cfg(any(
     target_os = "ios",
+    target_os = "android",
     target_os = "macos",
     target_os = "linux",
     target_vendor = "uwp"

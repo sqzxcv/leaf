@@ -1,7 +1,7 @@
 use std::{
     collections::{hash_map, HashMap},
     convert::From,
-    net::{IpAddr, SocketAddr, SocketAddrV4},
+    net::{SocketAddr, SocketAddrV4},
     str::FromStr,
     sync::Arc,
 };
@@ -21,15 +21,14 @@ use crate::proxy::retry;
 #[cfg(feature = "outbound-tryall")]
 use crate::proxy::tryall;
 
-#[cfg(feature = "outbound-stat")]
-use crate::proxy::stat;
-
 #[cfg(feature = "outbound-amux")]
 use crate::proxy::amux;
 #[cfg(feature = "outbound-direct")]
 use crate::proxy::direct;
 #[cfg(feature = "outbound-drop")]
 use crate::proxy::drop;
+#[cfg(feature = "outbound-quic")]
+use crate::proxy::quic;
 #[cfg(feature = "outbound-redirect")]
 use crate::proxy::redirect;
 #[cfg(feature = "outbound-shadowsocks")]
@@ -40,8 +39,6 @@ use crate::proxy::socks;
 use crate::proxy::tls;
 #[cfg(feature = "outbound-trojan")]
 use crate::proxy::trojan;
-#[cfg(feature = "outbound-vless")]
-use crate::proxy::vless;
 #[cfg(feature = "outbound-vmess")]
 use crate::proxy::vmess;
 #[cfg(feature = "outbound-ws")]
@@ -49,7 +46,7 @@ use crate::proxy::ws;
 
 use crate::{
     app::dns_client::DnsClient,
-    config::{self, Dns, Outbound},
+    config::{self, Outbound},
     proxy::{self, OutboundHandler, ProxyHandlerType},
 };
 
@@ -59,29 +56,12 @@ pub struct OutboundManager {
 }
 
 impl OutboundManager {
-    pub fn new(outbounds: &protobuf::RepeatedField<Outbound>, dns: &Dns) -> Result<Self> {
+    pub fn new(
+        outbounds: &protobuf::RepeatedField<Outbound>,
+        dns_client: Arc<DnsClient>,
+    ) -> Result<Self> {
         let mut handlers: HashMap<String, Arc<dyn OutboundHandler>> = HashMap::new();
         let mut default_handler: Option<String> = None;
-        let mut dns_servers = Vec::new();
-        let mut dns_hosts = HashMap::new();
-        for dns_server in dns.servers.iter() {
-            if let Ok(ip) = dns_server.parse::<IpAddr>() {
-                dns_servers.push(SocketAddr::new(ip, 53));
-            }
-        }
-        for (name, ips) in dns.hosts.iter() {
-            dns_hosts.insert(name.to_owned(), ips.values.to_vec());
-        }
-        if dns_servers.is_empty() {
-            Err(anyhow!("no dns servers"))?;
-        }
-        let dns_bind_addr = {
-            let addr = format!("{}:0", &dns.bind);
-            let addr = SocketAddrV4::from_str(&addr)
-                .map_err(|e| anyhow!("invalid bind addr [{}] in dns: {}", &dns.bind, e))?;
-            SocketAddr::from(addr)
-        };
-        let dns_client = Arc::new(DnsClient::new(dns_servers, dns_hosts, dns_bind_addr));
 
         for outbound in outbounds.iter() {
             let tag = String::from(&outbound.tag);
@@ -301,40 +281,6 @@ impl OutboundManager {
                     );
                     handlers.insert(tag, handler);
                 }
-                #[cfg(feature = "outbound-vless")]
-                "vless" => {
-                    let settings =
-                        match config::VLessOutboundSettings::parse_from_bytes(&outbound.settings) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                warn!("invalid [{}] outbound settings: {}", &tag, e);
-                                continue;
-                            }
-                        };
-
-                    let tcp = Box::new(vless::TcpHandler {
-                        address: settings.address.clone(),
-                        port: settings.port as u16,
-                        uuid: settings.uuid.clone(),
-                        bind_addr,
-                        dns_client: dns_client.clone(),
-                    });
-                    let udp = Box::new(vless::UdpHandler {
-                        address: settings.address.clone(),
-                        port: settings.port as u16,
-                        uuid: settings.uuid.clone(),
-                        bind_addr,
-                        dns_client: dns_client.clone(),
-                    });
-                    let handler = proxy::outbound::Handler::new(
-                        tag.clone(),
-                        colored::Color::Magenta,
-                        ProxyHandlerType::Endpoint,
-                        Some(tcp),
-                        Some(udp),
-                    );
-                    handlers.insert(tag, handler);
-                }
                 #[cfg(feature = "outbound-tls")]
                 "tls" => {
                     let settings =
@@ -395,6 +341,47 @@ impl OutboundManager {
                     );
                     handlers.insert(tag.clone(), handler);
                 }
+                #[cfg(feature = "outbound-quic")]
+                "quic" => {
+                    let settings =
+                        match config::QuicOutboundSettings::parse_from_bytes(&outbound.settings) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!("invalid [{}] outbound settings: {}", &tag, e);
+                                continue;
+                            }
+                        };
+                    let server_name = if settings.server_name.is_empty() {
+                        None
+                    } else {
+                        Some(settings.server_name.clone())
+                    };
+                    let certificate = if settings.certificate.is_empty() {
+                        None
+                    } else {
+                        Some(settings.certificate.clone())
+                    };
+                    let tcp = Box::new(quic::outbound::TcpHandler::new(
+                        settings.address.clone(),
+                        settings.port as u16,
+                        server_name,
+                        certificate,
+                        bind_addr,
+                        dns_client.clone(),
+                    ));
+                    let handler = proxy::outbound::Handler::new(
+                        tag.clone(),
+                        colored::Color::TrueColor {
+                            r: 252,
+                            g: 107,
+                            b: 3,
+                        },
+                        ProxyHandlerType::Endpoint,
+                        Some(tcp),
+                        None,
+                    );
+                    handlers.insert(tag.clone(), handler);
+                }
                 #[cfg(feature = "outbound-h2")]
                 "h2" => {
                     let settings =
@@ -419,30 +406,6 @@ impl OutboundManager {
                         ProxyHandlerType::Endpoint,
                         Some(tcp),
                         None,
-                    );
-                    handlers.insert(tag.clone(), handler);
-                }
-                #[cfg(feature = "outbound-stat")]
-                "stat" => {
-                    let settings =
-                        match config::StatOutboundSettings::parse_from_bytes(&outbound.settings) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                warn!("invalid [{}] outbound settings: {}", &tag, e);
-                                continue;
-                            }
-                        };
-                    let tcp = Box::new(stat::TcpHandler::new(
-                        settings.address,
-                        settings.port as u16,
-                    ));
-                    let udp = Box::new(stat::UdpHandler::new());
-                    let handler = proxy::outbound::Handler::new(
-                        tag.clone(),
-                        colored::Color::Red,
-                        ProxyHandlerType::Endpoint,
-                        Some(tcp),
-                        Some(udp),
                     );
                     handlers.insert(tag.clone(), handler);
                 }

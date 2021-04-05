@@ -76,7 +76,7 @@ fn main() {
         }
     };
 
-    let mut rt = {
+    let rt = {
         let threads = matches.value_of("threads").unwrap();
         let stack_size = matches
             .value_of("thread-stack-size")
@@ -84,24 +84,21 @@ fn main() {
             .parse::<usize>()
             .unwrap();
         if threads == "auto" {
-            tokio::runtime::Builder::new()
-                .threaded_scheduler()
+            tokio::runtime::Builder::new_multi_thread()
                 .thread_stack_size(stack_size)
                 .enable_all()
                 .build()
                 .unwrap()
         } else if let Ok(n) = threads.parse::<usize>() {
             if n > 1 {
-                tokio::runtime::Builder::new()
-                    .threaded_scheduler()
-                    .core_threads(n)
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(n)
                     .thread_stack_size(stack_size)
                     .enable_all()
                     .build()
                     .unwrap()
             } else {
-                tokio::runtime::Builder::new()
-                    .basic_scheduler()
+                tokio::runtime::Builder::new_current_thread()
                     .thread_stack_size(stack_size)
                     .enable_all()
                     .build()
@@ -130,12 +127,10 @@ fn main() {
         log::LevelFilter::Info
     };
     let mut logger = leaf::common::log::setup_logger(loglevel);
-    let console_output = fern::Output::stdout("\n");
-    logger = logger.chain(console_output);
     if let Some(log) = config.log.as_ref() {
         match log.output {
             config::Log_Output::CONSOLE => {
-                // console output already applied
+                logger = logger.chain(fern::Output::stdout("\n"));
             }
             config::Log_Output::FILE => {
                 let f = fern::log_file(&log.output_file).expect("open log file failed");

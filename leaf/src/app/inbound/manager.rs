@@ -6,8 +6,8 @@ use protobuf::Message;
 use crate::app::dispatcher::Dispatcher;
 use crate::app::nat_manager::NatManager;
 use crate::config::{
-    AMuxInboundSettings, ChainInboundSettings, Inbound, ShadowsocksInboundSettings,
-    TrojanInboundSettings, WebSocketInboundSettings,
+    AMuxInboundSettings, ChainInboundSettings, Inbound, QuicInboundSettings,
+    ShadowsocksInboundSettings, TrojanInboundSettings, WebSocketInboundSettings,
 };
 use crate::proxy;
 use crate::proxy::InboundHandler;
@@ -17,6 +17,8 @@ use crate::Runner;
 use crate::proxy::amux;
 #[cfg(feature = "inbound-http")]
 use crate::proxy::http;
+#[cfg(feature = "inbound-quic")]
+use crate::proxy::quic;
 #[cfg(feature = "inbound-shadowsocks")]
 use crate::proxy::shadowsocks;
 #[cfg(feature = "inbound-socks")]
@@ -36,6 +38,7 @@ use super::InboundListener;
     feature = "inbound-tun",
     any(
         target_os = "ios",
+        target_os = "android",
         target_os = "macos",
         target_os = "linux",
         target_vendor = "uwp"
@@ -121,6 +124,21 @@ impl InboundManager {
                     ));
                     handlers.insert(inbound.tag.clone(), handler);
                 }
+                #[cfg(feature = "inbound-quic")]
+                "quic" => {
+                    let settings =
+                        QuicInboundSettings::parse_from_bytes(&inbound.settings).unwrap();
+                    let udp = Arc::new(quic::inbound::UdpHandler::new(
+                        settings.certificate.clone(),
+                        settings.certificate_key.clone(),
+                    ));
+                    let handler = Arc::new(proxy::inbound::Handler::new(
+                        inbound.tag.clone(),
+                        None,
+                        Some(udp),
+                    ));
+                    handlers.insert(inbound.tag.clone(), handler);
+                }
                 _ => (),
             }
         }
@@ -188,6 +206,7 @@ impl InboundManager {
                     feature = "inbound-tun",
                     any(
                         target_os = "ios",
+                        target_os = "android",
                         target_os = "macos",
                         target_os = "linux",
                         target_vendor = "uwp"

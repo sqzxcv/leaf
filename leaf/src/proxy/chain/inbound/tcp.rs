@@ -1,67 +1,14 @@
+use std::io;
 use std::sync::Arc;
-use std::{io, pin::Pin};
 
 use async_trait::async_trait;
-use futures::stream::Stream;
-use futures::{
-    ready,
-    task::{Context, Poll},
-    Future,
-};
 
 use crate::{
-    proxy::{
-        InboundHandler, InboundTransport, IncomingTransport, ProxyStream, SingleInboundTransport,
-        TcpInboundHandler,
-    },
+    proxy::{InboundHandler, InboundTransport, ProxyStream, TcpInboundHandler},
     session::Session,
 };
 
-pub struct Incoming {
-    incoming: IncomingTransport,
-    actors: Vec<Arc<dyn InboundHandler>>,
-}
-
-impl Incoming {
-    pub fn new(incoming: IncomingTransport, actors: Vec<Arc<dyn InboundHandler>>) -> Self {
-        Incoming { incoming, actors }
-    }
-}
-
-impl Stream for Incoming {
-    // TODO io::Result<(...)>
-    type Item = SingleInboundTransport;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let transport = ready!(Stream::poll_next(Pin::new(&mut self.incoming), cx));
-        match transport {
-            Some(SingleInboundTransport::Stream(mut stream, mut sess)) => {
-                for (_, a) in self.actors.iter().enumerate() {
-                    match ready!(Pin::new(&mut a.handle_tcp(sess, stream)).poll(cx)) {
-                        Ok(InboundTransport::Stream(new_stream, new_sess)) => {
-                            stream = new_stream;
-                            sess = new_sess;
-                        }
-                        Ok(InboundTransport::Datagram(socket)) => {
-                            // Assume the last one.
-                            return Poll::Ready(Some(SingleInboundTransport::Datagram(socket)));
-                        }
-                        _ => {
-                            log::warn!("unexpected non-stream transport");
-                            return Poll::Ready(None);
-                        }
-                    }
-                }
-                Poll::Ready(Some(SingleInboundTransport::Stream(stream, sess)))
-            }
-            None => Poll::Ready(None),
-            _ => {
-                log::warn!("invalid incoming transport");
-                Poll::Ready(None)
-            }
-        }
-    }
-}
+use super::Incoming;
 
 pub struct Handler {
     pub actors: Vec<Arc<dyn InboundHandler>>,

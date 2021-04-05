@@ -1,6 +1,6 @@
 [package]
 name = "leaf-bin"
-version = "0.2.13"
+version = "0.2.14"
 authors = ["eycorsican <eric.y.corsican@gmail.com>"]
 edition = "2018"
 
@@ -14,23 +14,17 @@ default = [
 ]
 
 default-ring = [
-    "leaf/all-configs",
-    "leaf/all-endpoints",
-    "leaf/ring-aead",
-    "leaf/rustls-tls",
+    "leaf/default-ring",
 ]
 
 default-openssl = [
-    "leaf/all-configs",
-    "leaf/all-endpoints",
-    "leaf/openssl-aead",
-    "leaf/openssl-tls",
+    "leaf/default-openssl",
 ]
 
 [dependencies]
 leaf = { path = "../leaf", default-features = false, optional = true }
 clap = { version = "3.0.0-beta.1", default-features = false, features =["std"] }
 log = { version = "0.4", features = ["std"] }
-fern = { version = "0.5", features = ["colored"] }
-tokio = { version = "0.2", features = ["signal", "rt-threaded"] }
+fern = { version = "0.6", features = ["colored"] }
+tokio = { version = "1", features = ["signal", "rt", "rt-multi-thread"] }
 futures = "0.3"

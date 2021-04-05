@@ -13,7 +13,7 @@ use crate::proxy::{
     InboundDatagram, InboundTransport, SimpleInboundDatagram, SimpleProxyStream,
     SingleInboundTransport,
 };
-use crate::session::{Session, SocksAddr};
+use crate::session::{Network, Session, SocksAddr};
 use crate::Runner;
 
 use super::InboundListener;
@@ -78,6 +78,7 @@ async fn handle_inbound_datagram(
                 };
                 if !nat_manager.contains_key(&dgram_src).await {
                     let sess = Session {
+                        network: Network::Udp,
                         source: dgram_src.address,
                         destination: dst_addr.clone(),
                         inbound_tag: inbound_tag.clone(),
@@ -120,6 +121,7 @@ async fn handle_inbound_stream(
         .local_addr()
         .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
     let sess = Session {
+        network: Network::Tcp,
         source,
         local_addr,
         inbound_tag: handler.tag().clone(),
@@ -184,13 +186,13 @@ impl InboundListener for NetworkInboundListener {
 
         if self.handler.has_tcp() {
             let tcp_task = async move {
-                let mut listener = TcpListener::bind(format!("{}:{}", address, port).as_str())
+                let listener = TcpListener::bind(format!("{}:{}", address, port).as_str())
                     .await
                     .unwrap();
                 info!("inbound listening tcp {}:{}", address, port);
-                while let Some(stream) = listener.next().await {
-                    match stream {
-                        Ok(stream) => {
+                loop {
+                    match listener.accept().await {
+                        Ok((stream, _)) => {
                             tokio::spawn(handle_inbound_stream(
                                 stream,
                                 handler.clone(),
@@ -199,7 +201,8 @@ impl InboundListener for NetworkInboundListener {
                             ));
                         }
                         Err(e) => {
-                            warn!("accept connection failed: {}", e);
+                            error!("accept connection failed: {}", e);
+                            break;
                         }
                     }
                 }
@@ -209,6 +212,7 @@ impl InboundListener for NetworkInboundListener {
 
         if self.handler.has_udp() {
             let nat_manager = self.nat_manager.clone();
+            let dispatcher = self.dispatcher.clone();
             let handler = self.handler.clone();
             let address = self.address.clone();
             let port = self.port;
@@ -218,13 +222,42 @@ impl InboundListener for NetworkInboundListener {
                     .unwrap();
                 info!("inbound listening udp {}:{}", address, port);
 
+                // FIXME spawn
                 match handler
                     .handle_udp(Box::new(SimpleInboundDatagram(socket)))
                     .await
                 {
-                    Ok(socket) => {
-                        handle_inbound_datagram(handler.tag().clone(), socket, nat_manager).await;
-                    }
+                    Ok(res) => match res {
+                        InboundTransport::Stream(stream, mut sess) => {
+                            dispatcher.dispatch_tcp(&mut sess, stream).await;
+                        }
+                        InboundTransport::Datagram(socket) => {
+                            handle_inbound_datagram(handler.tag().clone(), socket, nat_manager)
+                                .await;
+                        }
+                        InboundTransport::Incoming(mut incoming) => {
+                            while let Some(transport) = incoming.next().await {
+                                match transport {
+                                    SingleInboundTransport::Stream(stream, mut sess) => {
+                                        let dispatcher2 = dispatcher.clone();
+                                        tokio::spawn(async move {
+                                            dispatcher2.dispatch_tcp(&mut sess, stream).await;
+                                        });
+                                    }
+                                    SingleInboundTransport::Datagram(socket) => {
+                                        let nat_manager2 = nat_manager.clone();
+                                        let tag = handler.tag().clone();
+                                        tokio::spawn(async move {
+                                            handle_inbound_datagram(tag, socket, nat_manager2)
+                                                .await;
+                                        });
+                                    }
+                                    SingleInboundTransport::Empty => (),
+                                }
+                            }
+                        }
+                        InboundTransport::Empty => (),
+                    },
                     Err(e) => {
                         debug!("handle inbound socket failed: {}", e);
                     }

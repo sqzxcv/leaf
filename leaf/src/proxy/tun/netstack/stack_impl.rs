@@ -20,7 +20,7 @@ use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
 use tokio::sync::Mutex as TokioMutex;
 use tokio::{
     self,
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
 };
 
 use crate::{
@@ -29,7 +29,7 @@ use crate::{
     app::nat_manager::NatManager,
     app::nat_manager::UdpPacket,
     common::mutex::AtomicMutex,
-    session::{DatagramSource, Session, SocksAddr},
+    session::{DatagramSource, Network, Session, SocksAddr},
 };
 
 use super::lwip::*;
@@ -88,7 +88,7 @@ impl NetStackImpl {
                     let _g = lwip_lock.lock();
                     unsafe { sys_check_timeouts() };
                 }
-                tokio::time::delay_for(time::Duration::from_millis(250)).await;
+                tokio::time::sleep(time::Duration::from_millis(250)).await;
             }
         });
 
@@ -106,6 +106,7 @@ impl NetStackImpl {
 
                 tokio::spawn(async move {
                     let mut sess = Session {
+                        network: Network::Tcp,
                         source: stream.local_addr().to_owned(),
                         local_addr: stream.remote_addr().to_owned(),
                         destination: SocksAddr::Ip(*stream.remote_addr()),
@@ -121,6 +122,15 @@ impl NetStackImpl {
                         {
                             sess.destination =
                                 SocksAddr::Domain(domain, stream.remote_addr().port());
+                        } else {
+                            // Although requests targeting fake IPs are assumed
+                            // never happen in real network traffic, which are
+                            // likely caused by poisoned DNS cache records, we
+                            // still have a chance to sniff the request domain
+                            // for TLS traffic in dispatcher.
+                            if stream.remote_addr().port() != 443 {
+                                return;
+                            }
                         }
                     }
 
@@ -248,7 +258,9 @@ impl NetStackImpl {
                     if let Some(domain) = fakedns2.lock().await.query_domain(&dst_addr.ip()) {
                         SocksAddr::Domain(domain, dst_addr.port())
                     } else {
-                        SocksAddr::Ip(dst_addr)
+                        // Skip this packet. Requests targeting fake IPs are
+                        // assumed never happen in real network traffic.
+                        continue;
                     }
                 } else {
                     SocksAddr::Ip(dst_addr)
@@ -258,6 +270,7 @@ impl NetStackImpl {
 
                 if !nat_manager.contains_key(&dgram_src).await {
                     let sess = Session {
+                        network: Network::Udp,
                         source: dgram_src.address,
                         destination: socks_dst_addr.clone(),
                         inbound_tag: inbound_tag.clone(),
@@ -309,15 +322,15 @@ impl AsyncRead for NetStackImpl {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         match self.rx.try_recv() {
             Ok(pkt) => {
-                if pkt.len() > buf.len() {
+                if pkt.len() > buf.remaining() {
                     warn!("truncated pkt, short buf");
                 }
-                (&mut buf[..pkt.len()]).copy_from_slice(&pkt);
-                Poll::Ready(Ok(pkt.len()))
+                buf.put_slice(&pkt);
+                Poll::Ready(Ok(()))
             }
             Err(_) => {
                 if let Some(waker) = self.waker.as_ref() {

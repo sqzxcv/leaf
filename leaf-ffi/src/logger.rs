@@ -28,6 +28,28 @@ mod platform_log {
     }
 }
 
+#[cfg(target_os = "android")]
+mod platform_log {
+    use super::bindings::{__android_log_print, android_LogPriority_ANDROID_LOG_VERBOSE};
+    pub fn log_out(data: &[u8]) {
+        unsafe {
+            let s = match std::ffi::CString::new(data) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            let _ = __android_log_print(
+                android_LogPriority_ANDROID_LOG_VERBOSE as std::os::raw::c_int,
+                "leaf".as_ptr() as _,
+                s.as_c_str().as_ptr(),
+            );
+        }
+    }
+
+    pub fn log_text(text: &str) {
+        log_out(text.as_bytes());
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod platform_log {
     extern "system" {
@@ -48,7 +70,7 @@ mod platform_log {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "windows")))]
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "windows")))]
 mod platform_log {
     fn log_out(_data: &[u8]) {}
     fn log_text(_text: &str) {}
@@ -74,11 +96,17 @@ impl log::Log for ConsoleLogger {
             )
         }
     }
-
-    fn flush(&self) {}
 }
 
 pub struct ConsoleWriter(pub BytesMut);
+
+impl Default for ConsoleWriter {
+    fn default() -> Self {
+        ConsoleWriter(BytesMut::new())
+    }
+}
+
+unsafe impl Send for ConsoleWriter {}
 
 impl Write for ConsoleWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {

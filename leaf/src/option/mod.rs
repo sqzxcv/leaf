@@ -9,10 +9,10 @@ mod ios;
 #[cfg(target_os = "ios")]
 pub use ios::*;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
 mod unix;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
 pub use unix::*;
 
 #[cfg(target_os = "windows")]
@@ -52,6 +52,10 @@ lazy_static! {
     /// Maximum outbound dial concurrency.
     pub static ref OUTBOUND_DIAL_CONCURRENCY: usize = {
         get_env_var("OUTBOUND_DIAL_CONCURRENCY", 1)
+    };
+
+    pub static ref ROUTING_DOMAIN_RESOLVE: bool = {
+        get_env_var("ROUTING_DOMAIN_RESOLVE", false)
     };
 }
 

@@ -97,6 +97,7 @@ fn main() {
         feature = "inbound-tun",
         any(
             target_os = "ios",
+            target_os = "android",
             target_os = "macos",
             target_os = "linux",
             target_os = "windows"
@@ -105,11 +106,13 @@ fn main() {
     {
         let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
         let vendor = env::var("CARGO_CFG_TARGET_VENDOR").unwrap();
-        if os == "ios" || os == "linux" || os == "macos" || vendor == "uwp" {
+        if os == "ios" || os == "android" || os == "linux" || os == "macos" || vendor == "uwp" {
             compile_lwip();
         }
 
-        if env::var("BINDINGS_GEN").is_ok() && (os == "ios" || os == "linux" || os == "macos") {
+        if env::var("BINDINGS_GEN").is_ok()
+            && (os == "ios" || os == "android" || os == "linux" || os == "macos")
+        {
             generate_lwip_bindings();
         }
     }

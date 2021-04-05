@@ -6,9 +6,13 @@ use futures::future::select_ok;
 use futures::stream::Stream;
 use futures::TryFutureExt;
 use log::*;
-use socket2::{Domain, Socket, Type};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpSocket, UdpSocket};
+#[cfg(target_os = "android")]
+use {
+    lazy_static::lazy_static, std::os::unix::io::AsRawFd, std::os::unix::io::RawFd,
+    tokio::io::AsyncReadExt, tokio::io::AsyncWriteExt, tokio::net::UnixStream, tokio::sync::Mutex,
+};
 
 use crate::{
     app::dns_client::DnsClient,
@@ -36,6 +40,8 @@ pub mod failover;
 pub mod h2;
 #[cfg(feature = "inbound-http")]
 pub mod http;
+#[cfg(any(feature = "inbound-quic", feature = "outbound-quic"))]
+pub mod quic;
 #[cfg(feature = "outbound-random")]
 pub mod random;
 #[cfg(feature = "outbound-redirect")]
@@ -46,8 +52,6 @@ pub mod retry;
 pub mod shadowsocks;
 #[cfg(any(feature = "inbound-socks", feature = "outbound-socks"))]
 pub mod socks;
-#[cfg(feature = "outbound-stat")]
-pub mod stat;
 #[cfg(feature = "outbound-tls")]
 pub mod tls;
 #[cfg(any(feature = "inbound-trojan", feature = "outbound-trojan"))]
@@ -58,14 +62,13 @@ pub mod tryall;
     feature = "inbound-tun",
     any(
         target_os = "ios",
+        target_os = "android",
         target_os = "macos",
         target_os = "linux",
         target_vendor = "uwp"
     )
 ))]
 pub mod tun;
-#[cfg(feature = "outbound-vless")]
-pub mod vless;
 #[cfg(feature = "outbound-vmess")]
 pub mod vmess;
 #[cfg(any(feature = "inbound-ws", feature = "outbound-ws"))]
@@ -103,9 +106,44 @@ pub trait HandlerTyped {
     fn handler_type(&self) -> ProxyHandlerType;
 }
 
+#[cfg(target_os = "android")]
+lazy_static! {
+    static ref SOCKET_PROTECT_PATH: Mutex<Option<String>> = Mutex::new(None);
+}
+
+// Sets the RPC service endpoint for protecting outbound sockets on Android to
+// avoid infinite loop. The `path` is treated as a Unix domain socket endpoint.
+// The RPC service simply listens for incoming connections, reads an int32 on
+// each connection, treats it as the file descriptor to protect, writes back 0
+// on success.
+#[cfg(target_os = "android")]
+pub async fn set_socket_protect_path(path: String) {
+    SOCKET_PROTECT_PATH.lock().await.replace(path);
+}
+
+#[cfg(target_os = "android")]
+async fn protect_socket(fd: RawFd) -> io::Result<()> {
+    if let Some(path) = SOCKET_PROTECT_PATH.lock().await.as_ref() {
+        let mut stream = UnixStream::connect(path).await?;
+        stream.write_i32(fd as i32).await?;
+        if stream.read_i32().await? != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("failed to protect outbound socket {}", fd),
+            ));
+        }
+    }
+    Ok(())
+}
+
 // New UDP socket.
 async fn create_udp_socket(bind_addr: &SocketAddr) -> io::Result<UdpSocket> {
-    UdpSocket::bind(bind_addr).await
+    let socket = UdpSocket::bind(bind_addr).await?;
+    #[cfg(target_os = "android")]
+    {
+        protect_socket(socket.as_raw_fd()).await?;
+    }
+    Ok(socket)
 }
 
 // A single TCP dial.
@@ -113,19 +151,16 @@ async fn tcp_dial_task(
     dial_addr: SocketAddr,
     bind_addr: &SocketAddr,
 ) -> io::Result<(Box<dyn ProxyStream>, SocketAddr)> {
-    let socket = Socket::new(Domain::ipv4(), Type::stream(), None)?;
-    socket.bind(&bind_addr.clone().into())?;
-    trace!("dialing tcp {}", &dial_addr);
-    match TcpStream::connect_std(socket.into_tcp_stream(), &dial_addr).await {
-        Ok(stream) => {
-            trace!("connected tcp {}", &dial_addr);
-            Ok((Box::new(SimpleProxyStream(stream)), dial_addr))
-        }
-        Err(e) => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("connect failed: {}", e),
-        )),
+    let socket = TcpSocket::new_v4()?;
+    #[cfg(target_os = "android")]
+    {
+        protect_socket(socket.as_raw_fd()).await?;
     }
+    socket.bind(*bind_addr)?;
+    trace!("dialing tcp {}", &dial_addr);
+    let stream = socket.connect(dial_addr).await?;
+    trace!("connected tcp {}", &dial_addr);
+    Ok((Box::new(SimpleProxyStream(stream)), dial_addr))
 }
 
 // Dials a TCP stream.
@@ -312,7 +347,9 @@ pub enum OutboundTransport {
     Datagram(Box<dyn OutboundDatagram>),
 }
 
-pub trait InboundHandler: Tag + TcpInboundHandler + UdpInboundHandler + Send + Unpin {
+pub trait InboundHandler:
+    Tag + TcpInboundHandler + UdpInboundHandler + Send + Sync + Unpin
+{
     fn has_tcp(&self) -> bool;
     fn has_udp(&self) -> bool;
 }
@@ -335,11 +372,11 @@ pub trait UdpInboundHandler: Send + Sync + Unpin {
     async fn handle_udp<'a>(
         &'a self,
         socket: Box<dyn InboundDatagram>,
-    ) -> io::Result<Box<dyn InboundDatagram>>;
+    ) -> io::Result<InboundTransport>;
 }
 
 /// An unreliable transport for inbound handlers.
-pub trait InboundDatagram: Send + Unpin {
+pub trait InboundDatagram: Send + Sync + Unpin {
     /// Splits the datagram.
     fn split(
         self: Box<Self>,
@@ -347,6 +384,9 @@ pub trait InboundDatagram: Send + Unpin {
         Box<dyn InboundDatagramRecvHalf>,
         Box<dyn InboundDatagramSendHalf>,
     );
+
+    /// Turns the datagram into a [`std::net::UdpSocket`].
+    fn into_std(self: Box<Self>) -> io::Result<std::net::UdpSocket>;
 }
 
 /// The receive half.
@@ -392,7 +432,7 @@ pub enum SingleInboundTransport {
     Empty,
 }
 
-pub type IncomingTransport = Box<dyn Stream<Item = SingleInboundTransport> + Sync + Send + Unpin>;
+pub type IncomingTransport = Box<dyn Stream<Item = SingleInboundTransport> + Send + Unpin>;
 
 /// An inbound transport represents either a reliable or unreliable transport.
 pub enum InboundTransport {
