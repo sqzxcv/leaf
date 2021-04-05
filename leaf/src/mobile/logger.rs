@@ -5,7 +5,7 @@ use bytes::BytesMut;
 #[cfg(target_os = "ios")]
 mod platform_log {
     pub fn log_out(data: &[u8]) {
-        use crate::ios::{asl_log, ASL_LEVEL_NOTICE};
+        use super::{asl_log, ASL_LEVEL_NOTICE};
         use std::{ffi, ptr};
         unsafe {
             let s = match ffi::CString::new(data) {
