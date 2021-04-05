@@ -1,7 +1,6 @@
 use std::io::{self, Write};
 
 use bytes::BytesMut;
-use log::{Level, Metadata, Record};
 
 #[cfg(target_os = "ios")]
 mod platform_log {
