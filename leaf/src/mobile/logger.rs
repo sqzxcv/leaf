@@ -45,15 +45,11 @@ mod platform_log {
 mod platform_log {
     extern "system" {
         fn OutputDebugStringW(lp_output_string: *const u16);
-        fn GetTickCount() -> u64;
     }
     pub fn log_text(text: &str) {
         use std::{ffi::OsStr, os::windows::prelude::OsStrExt};
-        let mut bytes: Vec<_> =
-            unsafe { OsStr::new(GetTickCount().to_string().as_str()).encode_wide() }.collect(); //Vec::with_capacity(text.len() + 12);
-        bytes.reserve(text.len() + 12);
-        bytes.extend(OsStr::new(text).encode_wide());
-        bytes.extend_from_slice(&[0]);
+        let mut bytes: Vec<_> = OsStr::new(text).encode_wide().collect();
+        bytes.push(0);
         unsafe { OutputDebugStringW(bytes.as_ptr()) };
     }
     pub fn log_out(data: &[u8]) {
@@ -78,6 +74,7 @@ unsafe impl Send for ConsoleWriter {}
 
 impl Write for ConsoleWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.clear();
         self.0.extend_from_slice(buf);
         #[cfg(target_vendor = "uwp")]
         platform_log::log_out(&self.0[..]);
