@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::{
     io,
     net::SocketAddr,
@@ -33,7 +34,7 @@ use crate::{
 };
 
 use super::lwip::*;
-use super::output::{output_ip4, OUTPUT_CB_PTR};
+use super::output::{output_ip4, output_ip6, OUTPUT_CB_PTR};
 use super::tcp_listener::TcpListener;
 use super::tcp_stream::TcpStream;
 use super::udp::{send_udp, UdpListener};
@@ -59,10 +60,12 @@ impl NetStackImpl {
     ) -> Box<Self> {
         LWIP_INIT.call_once(|| unsafe { lwip_init() });
 
+        unsafe { super::STACK_CLOSED.store(false, Ordering::Relaxed) };
+
         unsafe {
             (*netif_list).output = Some(output_ip4);
+            (*netif_list).output_ip6 = Some(output_ip6);
             (*netif_list).mtu = 1500;
-            // (*netif_list).output_ip6 = Some(output_ip6);
         }
 
         let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
@@ -315,6 +318,12 @@ impl NetStackImpl {
             return Ok(n);
         }
         Ok(0)
+    }
+}
+
+impl Drop for NetStackImpl {
+    fn drop(&mut self) {
+        unsafe { super::STACK_CLOSED.store(true, Ordering::Relaxed) };
     }
 }
 

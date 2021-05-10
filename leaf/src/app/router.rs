@@ -9,8 +9,8 @@ use log::*;
 use maxminddb::geoip2::Country;
 use memmap::Mmap;
 
-use crate::app::dns_client::DnsClient;
-use crate::config::{self, RoutingRule};
+use crate::app::SyncDnsClient;
+use crate::config::{self, Router_Rule};
 use crate::session::{Session, SocksAddr};
 
 pub trait Condition: Send + Sync + Unpin {
@@ -73,15 +73,17 @@ struct IpCidrMatcher {
 }
 
 impl IpCidrMatcher {
-    fn new(ips: &protobuf::RepeatedField<String>) -> Self {
+    fn new(ips: &mut protobuf::RepeatedField<String>) -> Self {
         let mut cidrs = Vec::new();
-        for ip in ips {
+        for ip in ips.iter_mut() {
+            let ip = std::mem::replace(ip, String::new());
             match ip.parse::<IpCidr>() {
                 Ok(cidr) => cidrs.push(cidr),
                 Err(err) => {
                     debug!("parsing cidr {} failed: {}", ip, err);
                 }
             }
+            drop(ip);
         }
         IpCidrMatcher { values: cidrs }
     }
@@ -268,18 +270,19 @@ struct DomainMatcher {
 }
 
 impl DomainMatcher {
-    fn new(domains: &protobuf::RepeatedField<config::RoutingRule_Domain>) -> Self {
+    fn new(domains: &mut protobuf::RepeatedField<config::Router_Rule_Domain>) -> Self {
         let mut cond_or = ConditionOr::new();
-        for rr_domain in domains.iter() {
+        for rr_domain in domains.iter_mut() {
+            let filter = std::mem::replace(&mut rr_domain.value, String::new());
             match rr_domain.field_type {
-                config::RoutingRule_Domain_Type::PLAIN => {
-                    cond_or.add(Box::new(DomainKeywordMatcher::new(rr_domain.value.clone())));
+                config::Router_Rule_Domain_Type::PLAIN => {
+                    cond_or.add(Box::new(DomainKeywordMatcher::new(filter)));
                 }
-                config::RoutingRule_Domain_Type::DOMAIN => {
-                    cond_or.add(Box::new(DomainSuffixMatcher::new(rr_domain.value.clone())));
+                config::Router_Rule_Domain_Type::DOMAIN => {
+                    cond_or.add(Box::new(DomainSuffixMatcher::new(filter)));
                 }
-                config::RoutingRule_Domain_Type::FULL => {
-                    cond_or.add(Box::new(DomainFullMatcher::new(rr_domain.value.clone())));
+                config::Router_Rule_Domain_Type::FULL => {
+                    cond_or.add(Box::new(DomainFullMatcher::new(filter)));
                 }
             }
         }
@@ -355,25 +358,22 @@ impl Condition for ConditionOr {
 
 pub struct Router {
     rules: Vec<Rule>,
-    dns_client: Arc<DnsClient>,
+    domain_resolve: bool,
+    dns_client: SyncDnsClient,
 }
 
 impl Router {
-    pub fn new(
-        routing_rules: &protobuf::RepeatedField<RoutingRule>,
-        dns_client: Arc<DnsClient>,
-    ) -> Self {
-        let mut rules = Vec::new();
+    fn load_rules(rules: &mut Vec<Rule>, routing_rules: &mut protobuf::RepeatedField<Router_Rule>) {
         let mut mmdb_readers: HashMap<String, Arc<maxminddb::Reader<Mmap>>> = HashMap::new();
-        for rr in routing_rules.iter() {
+        for rr in routing_rules.iter_mut() {
             let mut cond_and = ConditionAnd::new();
 
             if rr.domains.len() > 0 {
-                cond_and.add(Box::new(DomainMatcher::new(&rr.domains)));
+                cond_and.add(Box::new(DomainMatcher::new(&mut rr.domains)));
             }
 
             if rr.ip_cidrs.len() > 0 {
-                cond_and.add(Box::new(IpCidrMatcher::new(&rr.ip_cidrs)));
+                cond_and.add(Box::new(IpCidrMatcher::new(&mut rr.ip_cidrs)));
             }
 
             if rr.mmdbs.len() > 0 {
@@ -407,9 +407,38 @@ impl Router {
                 continue;
             }
 
-            rules.push(Rule::new(rr.target_tag.clone(), Box::new(cond_and)));
+            let tag = std::mem::replace(&mut rr.target_tag, String::new());
+            rules.push(Rule::new(tag, Box::new(cond_and)));
         }
-        Router { rules, dns_client }
+    }
+
+    pub fn new(
+        router: &mut protobuf::SingularPtrField<config::Router>,
+        dns_client: SyncDnsClient,
+    ) -> Self {
+        let mut rules: Vec<Rule> = Vec::new();
+        let mut domain_resolve = false;
+        if let Some(router) = router.as_mut() {
+            Self::load_rules(&mut rules, &mut router.rules);
+            domain_resolve = router.domain_resolve;
+        }
+        Router {
+            rules,
+            domain_resolve,
+            dns_client,
+        }
+    }
+
+    pub fn reload(
+        &mut self,
+        router: &mut protobuf::SingularPtrField<config::Router>,
+    ) -> Result<()> {
+        self.rules.clear();
+        if let Some(router) = router.as_mut() {
+            Self::load_rules(&mut self.rules, &mut router.rules);
+            self.domain_resolve = router.domain_resolve;
+        }
+        Ok(())
     }
 
     pub async fn pick_route(&self, sess: &Session) -> Result<&String> {
@@ -418,12 +447,15 @@ impl Router {
                 return Ok(&rule.target);
             }
         }
-        if sess.destination.is_domain() && *crate::option::ROUTING_DOMAIN_RESOLVE {
-            let ips = self
-                .dns_client
-                .lookup(sess.destination.host())
-                .map_err(|e| anyhow!("lookup {} failed: {}", sess.destination.host(), e))
-                .await?;
+        if sess.destination.is_domain() && self.domain_resolve {
+            let ips = {
+                self.dns_client
+                    .read()
+                    .await
+                    .lookup(sess.destination.domain().unwrap())
+                    .map_err(|e| anyhow!("lookup {} failed: {}", sess.destination.host(), e))
+                    .await?
+            };
             if !ips.is_empty() {
                 let mut new_sess = sess.clone();
                 new_sess.destination = SocksAddr::from((ips[0], sess.destination.port()));

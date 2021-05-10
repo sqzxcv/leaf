@@ -1,14 +1,14 @@
 use std::io;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use sha2::{Digest, Sha224};
+use tokio::io::AsyncWriteExt;
 
 use crate::{
-    app::dns_client::DnsClient,
-    proxy::{BufHeadProxyStream, OutboundConnect, ProxyStream, TcpConnector, TcpOutboundHandler},
+    app::SyncDnsClient,
+    proxy::{OutboundConnect, ProxyStream, SimpleProxyStream, TcpConnector, TcpOutboundHandler},
     session::{Session, SocksAddrWireType},
 };
 
@@ -17,17 +17,13 @@ pub struct Handler {
     pub port: u16,
     pub password: String,
     pub bind_addr: SocketAddr,
-    pub dns_client: Arc<DnsClient>,
+    pub dns_client: SyncDnsClient,
 }
 
 impl TcpConnector for Handler {}
 
 #[async_trait]
 impl TcpOutboundHandler for Handler {
-    fn name(&self) -> &str {
-        super::NAME
-    }
-
     fn tcp_connect_addr(&self) -> Option<OutboundConnect> {
         Some(OutboundConnect::Proxy(
             self.address.clone(),
@@ -41,7 +37,7 @@ impl TcpOutboundHandler for Handler {
         sess: &'a Session,
         stream: Option<Box<dyn ProxyStream>>,
     ) -> io::Result<Box<dyn ProxyStream>> {
-        let stream = if let Some(stream) = stream {
+        let mut stream = if let Some(stream) = stream {
             stream
         } else {
             self.dial_tcp_stream(
@@ -61,7 +57,8 @@ impl TcpOutboundHandler for Handler {
         sess.destination
             .write_buf(&mut buf, SocksAddrWireType::PortLast)?;
         buf.put_slice(b"\r\n");
-        // FIXME receive-only conns
-        Ok(Box::new(BufHeadProxyStream::new(stream, buf.freeze())))
+        // FIXME combine header and first payload
+        stream.write_all(&buf).await?;
+        Ok(Box::new(SimpleProxyStream(stream)))
     }
 }

@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use bytes::BytesMut;
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 mod platform_log {
     pub fn log_out(data: &[u8]) {
         use super::bindings::{asl_log, ASL_LEVEL_NOTICE};

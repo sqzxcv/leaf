@@ -1,9 +1,9 @@
 ios:
-	cargo lipo -p leaf-ffi --release --targets aarch64-apple-ios --manifest-path leaf-ffi/Cargo.toml
+	cargo lipo --release --targets aarch64-apple-ios --manifest-path leaf-ffi/Cargo.toml --no-default-features --features "default-openssl"
 	cbindgen --config leaf-ffi/cbindgen.toml leaf-ffi/src/lib.rs > target/universal/release/leaf.h
 
 ios-dev:
-	cargo lipo -p leaf-ffi --targets aarch64-apple-ios --manifest-path leaf-ffi/Cargo.toml
+	cargo lipo --targets aarch64-apple-ios --manifest-path leaf-ffi/Cargo.toml --no-default-features --features "default-openssl"
 	cbindgen --config leaf-ffi/cbindgen.toml leaf-ffi/src/lib.rs > target/universal/debug/leaf.h
 
 lib:
@@ -20,8 +20,11 @@ local:
 local-dev:
 	cargo build -p leaf-bin
 
+mipsel:
+	./misc/build_cross.sh mipsel-unknown-linux-musl
+
 test:
-	cargo test -p leaf
+	cargo test -p leaf -- --nocapture
 
 # Force a re-generation of protobuf files.
 proto-gen:
