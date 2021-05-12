@@ -44,6 +44,9 @@ pub mod mobile;
 #[cfg(all(feature = "inbound-tun", any(target_os = "macos", target_os = "linux")))]
 mod sys;
 
+#[cfg(target_vendor = "uwp")]
+pub mod winrt;
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]

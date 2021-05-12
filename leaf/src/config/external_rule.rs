@@ -58,6 +58,9 @@ pub fn add_external_rule(rule: &mut internal::Router_Rule, ext_external: &str) -
         };
 
         // Loads SiteGroup objects one by one instead of loading the whole list.
+        #[cfg(target_vendor = "uwp")]
+        let mut reader = BufReader::with_capacity(2048, crate::winrt::open_file(&file)?);
+        #[cfg(not(target_vendor = "uwp"))]
         let mut reader = BufReader::with_capacity(2048, File::open(&file)?);
         let mut input = protobuf::CodedInputStream::new(&mut reader);
         while !input.eof()? {

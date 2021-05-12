@@ -35,12 +35,19 @@ impl Condition for Rule {
 }
 
 struct MmdbMatcher {
+    #[cfg(not(target_vendor = "uwp"))]
     reader: Arc<maxminddb::Reader<Mmap>>,
+    #[cfg(target_vendor = "uwp")]
+    reader: Arc<maxminddb::Reader<Vec<u8>>>,
     country_code: String,
 }
 
 impl MmdbMatcher {
-    fn new(reader: Arc<maxminddb::Reader<Mmap>>, country_code: String) -> Self {
+    fn new(
+        #[cfg(not(target_vendor = "uwp"))] reader: Arc<maxminddb::Reader<Mmap>>,
+        #[cfg(target_vendor = "uwp")] reader: Arc<maxminddb::Reader<Vec<u8>>>,
+        country_code: String,
+    ) -> Self {
         MmdbMatcher {
             reader,
             country_code,
@@ -364,7 +371,10 @@ pub struct Router {
 
 impl Router {
     fn load_rules(rules: &mut Vec<Rule>, routing_rules: &mut protobuf::RepeatedField<Router_Rule>) {
+        #[cfg(not(target_vendor = "uwp"))]
         let mut mmdb_readers: HashMap<String, Arc<maxminddb::Reader<Mmap>>> = HashMap::new();
+        #[cfg(target_vendor = "uwp")]
+        let mut mmdb_readers: HashMap<String, Arc<maxminddb::Reader<_>>> = HashMap::new();
         for rr in routing_rules.iter_mut() {
             let mut cond_and = ConditionAnd::new();
 
@@ -381,7 +391,19 @@ impl Router {
                     let reader = match mmdb_readers.get(&mmdb.file) {
                         Some(r) => r.clone(),
                         None => {
-                            if let Ok(r) = maxminddb::Reader::open_mmap(&mmdb.file) {
+                            #[cfg(not(target_vendor = "uwp"))]
+                            let mmap_result = maxminddb::Reader::open_mmap(&mmdb.file);
+                            #[cfg(target_vendor = "uwp")]
+                            let mmap_result = (|| {
+                                use std::io::Read;
+                                let mut file = crate::winrt::open_file(&mmdb.file)?;
+                                let mut bytes = Vec::with_capacity(
+                                    file.metadata().map(|m| m.len() as usize + 1).unwrap_or(0),
+                                );
+                                file.read_to_end(&mut bytes)?;
+                                maxminddb::Reader::from_source(bytes)
+                            })();
+                            if let Ok(r) = mmap_result {
                                 let r = Arc::new(r);
                                 mmdb_readers.insert((&mmdb.file).to_owned(), r.clone());
                                 r
