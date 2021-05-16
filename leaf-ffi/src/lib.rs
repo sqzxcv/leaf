@@ -99,7 +99,7 @@ pub extern "C" fn leaf_run(rt_id: u16, config_path: *const c_char) -> i32 {
             auto_reload: false,
             runtime_opt: leaf::RuntimeOption::SingleThread,
         };
-        if let Err(e) = leaf::start(rt_id, opts) {
+        if let Err(e) = leaf::start(rt_id, opts, Box::new(|_| {})) {
             return to_errno(e);
         }
         ERR_OK
@@ -156,37 +156,49 @@ pub extern "system" fn run_leaf(
     on_dns: Option<extern "system" fn(dns: *const c_char)>,
 ) -> *mut tokio::runtime::Runtime {
     use std::ptr::null_mut;
-    let mut config = match unsafe { CStr::from_ptr(config_path).to_str() }
-        .map_err(Into::into)
-        .and_then(leaf::config::from_file)
-    {
-        Ok(config) => config,
+    let config_path = match unsafe { CStr::from_ptr(config_path).to_str() } {
+        Ok(s) => s.to_string(),
         Err(_) => {
-            println!("invalid config path or config file");
+            println!("invalid config path");
             return null_mut();
         }
     };
-    if !bind_host.is_null() {
-        let bind_host = unsafe { CStr::from_ptr(bind_host).to_str().unwrap().to_string() };
-        for dns in config.dns.mut_iter() {
-            if let Some(on_dns) = on_dns {
-                dns.servers
-                    .iter()
-                    .map(|s| std::ffi::CString::new(&**s).unwrap())
-                    .for_each(|cs| on_dns(cs.as_ptr()));
-            }
-            dns.bind = bind_host.clone();
+    let config = match leaf::config::from_file(&config_path) {
+        Ok(config) => config,
+        Err(_) => {
+            println!("invalid config file");
+            return null_mut();
         }
-        for outbound in config.outbounds.iter_mut() {
-            outbound.bind = bind_host.clone();
+    };
+    if let Some(on_dns) = on_dns {
+        for dns in config.dns.iter() {
+            dns.servers
+                .iter()
+                .map(|s| std::ffi::CString::new(&**s).unwrap())
+                .for_each(|cs| on_dns(cs.as_ptr()));
         }
     }
+    let config_transformer = if bind_host.is_null() {
+        Box::new(|_: &mut leaf::config::Config| {})
+            as Box<dyn Fn(&mut leaf::config::Config) + Send + Sync>
+    } else {
+        let bind_host = unsafe { CStr::from_ptr(bind_host).to_str().unwrap().to_string() };
+        Box::new(move |config: &mut leaf::config::Config| {
+            let leaf::config::Config { dns, outbounds, .. } = config;
+            dns.mut_iter().for_each(|d| d.bind = bind_host.clone());
+            outbounds
+                .iter_mut()
+                .for_each(|o| o.bind = bind_host.clone());
+        }) as Box<dyn Fn(&mut leaf::config::Config) + Send + Sync>
+    };
     match leaf::start(
         0,
         StartOptions {
-            config: Config::Internal(config),
+            config: Config::File(config_path),
+            auto_reload: true,
             runtime_opt: RuntimeOption::MultiThreadAuto(2 * 1024 * 1024),
         },
+        config_transformer,
     ) {
         Ok(rt) => Box::into_raw(Box::new(rt)),
         Err(_) => null_mut(),
@@ -199,6 +211,7 @@ pub extern "system" fn stop_leaf(runtime: *mut tokio::runtime::Runtime) {
     if runtime.is_null() {
         return;
     }
+    leaf::RUNTIME_MANAGER.lock().unwrap().clear();
     let rt = unsafe { Box::from_raw(runtime) };
     rt.shutdown_background();
 }

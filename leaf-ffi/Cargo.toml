@@ -12,6 +12,7 @@ crate-type = ["staticlib"]
 [features]
 default = [
     "default-ring",
+    "auto-reload",
 ]
 
 default-ring = [

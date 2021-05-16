@@ -69,7 +69,7 @@ pub fn run_with_options(
         threads,
         stack_size,
     );
-    crate::start(rt_id, opts)
+    crate::start(rt_id, opts, Box::new(|_| {}))
 }
 
 pub async fn test_outbound(tag: &str, config: &Config) {

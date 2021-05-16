@@ -76,6 +76,7 @@ pub struct RuntimeManager {
     reload_tx: mpsc::Sender<std::sync::mpsc::SyncSender<Result<(), Error>>>,
     shutdown_tx: mpsc::Sender<()>,
     router: Arc<RwLock<Router>>,
+    config_transformer: Box<dyn Fn(&mut config::Config) + Send + Sync>,
     dns_client: Arc<RwLock<DnsClient>>,
     outbound_manager: Arc<RwLock<OutboundManager>>,
     #[cfg(feature = "auto-reload")]
@@ -92,6 +93,7 @@ impl RuntimeManager {
         router: Arc<RwLock<Router>>,
         dns_client: Arc<RwLock<DnsClient>>,
         outbound_manager: Arc<RwLock<OutboundManager>>,
+        config_transformer: Box<dyn Fn(&mut config::Config) + Send + Sync>,
     ) -> Arc<Self> {
         Arc::new(Self {
             #[cfg(feature = "auto-reload")]
@@ -106,6 +108,7 @@ impl RuntimeManager {
             outbound_manager,
             #[cfg(feature = "auto-reload")]
             watcher: Mutex::new(None),
+            config_transformer,
         })
     }
 
@@ -142,6 +145,7 @@ impl RuntimeManager {
         };
         log::info!("reloading from config file: {}", config_path);
         let mut config = config::from_file(config_path).map_err(Error::Config)?;
+        (self.config_transformer)(&mut config);
         self.router.write().await.reload(&mut config.router)?;
         self.dns_client.write().await.reload(&config.dns)?;
         self.outbound_manager
@@ -220,9 +224,7 @@ impl RuntimeManager {
                                     }
                                 }
                                 #[cfg(target_os = "windows")]
-                                event::EventKind::Modify(event::ModifyKind::Data(
-                                    event::DataChange::Any,
-                                )) => {
+                                event::EventKind::Modify(event::ModifyKind::Any) => {
                                     log::info!("config file event matched: {:?}", ev);
                                     if let Err(e) = reload(rt_id) {
                                         log::warn!("reload config file failed: {}", e);
@@ -342,7 +344,11 @@ pub struct StartOptions {
     pub runtime_opt: RuntimeOption,
 }
 
-pub fn start(rt_id: RuntimeId, opts: StartOptions) -> Result<tokio::runtime::Runtime, Error> {
+pub fn start(
+    rt_id: RuntimeId,
+    opts: StartOptions,
+    config_transformer: Box<dyn Fn(&mut config::Config) + Send + Sync>,
+) -> Result<tokio::runtime::Runtime, Error> {
     println!("start with options:\n{:#?}", opts);
 
     let (reload_tx, mut reload_rx) = mpsc::channel(1);
@@ -357,6 +363,7 @@ pub fn start(rt_id: RuntimeId, opts: StartOptions) -> Result<tokio::runtime::Run
         Config::File(p) => config::from_file(&p).map_err(Error::Config)?,
         Config::Internal(c) => c,
     };
+    config_transformer(&mut config);
 
     // FIXME Unfortunately fern does not allow re-initializing the logger,
     // should consider another logging lib if the situation doesn't change.
@@ -453,6 +460,7 @@ pub fn start(rt_id: RuntimeId, opts: StartOptions) -> Result<tokio::runtime::Run
         router,
         dns_client,
         outbound_manager,
+        config_transformer,
     );
 
     // Monitor config file changes.
@@ -524,12 +532,12 @@ pub fn start(rt_id: RuntimeId, opts: StartOptions) -> Result<tokio::runtime::Run
         rt.spawn(task);
     }
 
-    /*
     RUNTIME_MANAGER
         .lock()
         .map_err(|_| Error::RuntimeManager)?
         .insert(rt_id, runtime_manager);
 
+    /*
     rt.block_on(futures::future::select_all(tasks));
 
     #[cfg(all(feature = "inbound-tun", any(target_os = "macos", target_os = "linux")))]
