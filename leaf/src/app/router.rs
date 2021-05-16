@@ -395,8 +395,9 @@ impl Router {
                             let mmap_result = maxminddb::Reader::open_mmap(&mmdb.file);
                             #[cfg(target_vendor = "uwp")]
                             let mmap_result = (|| {
+                                use std::fs::File;
                                 use std::io::Read;
-                                let mut file = crate::winrt::open_file(&mmdb.file)?;
+                                let mut file = File::open(&mmdb.file)?;
                                 let mut bytes = Vec::with_capacity(
                                     file.metadata().map(|m| m.len() as usize + 1).unwrap_or(0),
                                 );
