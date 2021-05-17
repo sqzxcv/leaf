@@ -29,12 +29,12 @@ const MTU: usize = 1500;
 
 enum ReceiverInfo {
     Registered {
-        on_receive: extern "system" fn(*const u8, usize, *const c_void),
+        on_receive: extern "C" fn(*const u8, usize, *const c_void),
         context: AtomicPtr<c_void>,
         tun_rx: UnboundedReceiver<Vec<u8>>,
     },
     ReceiverTaken {
-        on_receive: extern "system" fn(*const u8, usize, *const c_void),
+        on_receive: extern "C" fn(*const u8, usize, *const c_void),
         context: AtomicPtr<c_void>,
     },
     Stopped,
@@ -73,8 +73,8 @@ fn get_receiver_info() -> &'static Mutex<ReceiverInfo> {
 }
 
 #[no_mangle]
-pub extern "system" fn netstack_register(
-    on_receive: extern "system" fn(*const u8, usize, *const c_void),
+pub extern "C" fn netstack_register(
+    on_receive: extern "C" fn(*const u8, usize, *const c_void),
     context: *const c_void,
 ) -> *mut UnboundedSender<Vec<u8>> {
     let mut receiver_info = get_receiver_info().lock().unwrap();
@@ -88,7 +88,7 @@ pub extern "system" fn netstack_register(
 }
 
 #[no_mangle]
-pub extern "system" fn netstack_send(
+pub extern "C" fn netstack_send(
     handle: *const UnboundedSender<Vec<u8>>,
     data: *mut u8,
     size: usize,
@@ -110,7 +110,7 @@ pub extern "system" fn netstack_send(
 }
 
 #[no_mangle]
-pub extern "system" fn netstack_release(handle: *mut UnboundedSender<Vec<u8>>) -> *const c_void {
+pub extern "C" fn netstack_release(handle: *mut UnboundedSender<Vec<u8>>) -> *const c_void {
     unsafe { Box::from_raw(handle) };
     let mut receiver_info = get_receiver_info().lock().unwrap();
     if let ReceiverInfo::Registered { context, .. } | ReceiverInfo::ReceiverTaken { context, .. } =
