@@ -135,7 +135,7 @@ fn main() {
     {
         let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
         let vendor = env::var("CARGO_CFG_TARGET_VENDOR").unwrap();
-        if os == "ios" || os == "android" || os == "linux" || os == "macos" || vendor == "uwp" {
+        if os == "ios" || os == "android" || os == "linux" || os == "macos" || vendor == "uwp" || os =="windows" {
             compile_lwip();
         }
 
