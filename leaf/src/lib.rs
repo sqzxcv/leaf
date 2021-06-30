@@ -37,7 +37,7 @@ pub mod util;
     target_os = "ios",
     target_os = "macos",
     target_os = "android",
-    target_vendor = "uwp"
+    target_os = "windows"
 ))]
 pub mod mobile;
 
@@ -439,7 +439,7 @@ pub fn start(
             target_os = "android",
             target_os = "macos",
             target_os = "linux",
-            target_vendor = "uwp"
+            target_os = "windows"
         )
     ))]
     if let Ok(r) = inbound_manager.get_tun_runner() {

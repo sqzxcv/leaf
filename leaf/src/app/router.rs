@@ -35,17 +35,17 @@ impl Condition for Rule {
 }
 
 struct MmdbMatcher {
-    #[cfg(not(target_vendor = "uwp"))]
+    #[cfg(not(target_os = "windows"))]
     reader: Arc<maxminddb::Reader<Mmap>>,
-    #[cfg(target_vendor = "uwp")]
+    #[cfg(target_os = "windows")]
     reader: Arc<maxminddb::Reader<Vec<u8>>>,
     country_code: String,
 }
 
 impl MmdbMatcher {
     fn new(
-        #[cfg(not(target_vendor = "uwp"))] reader: Arc<maxminddb::Reader<Mmap>>,
-        #[cfg(target_vendor = "uwp")] reader: Arc<maxminddb::Reader<Vec<u8>>>,
+        #[cfg(not(target_os = "windows"))] reader: Arc<maxminddb::Reader<Mmap>>,
+        #[cfg(target_os = "windows")] reader: Arc<maxminddb::Reader<Vec<u8>>>,
         country_code: String,
     ) -> Self {
         MmdbMatcher {
@@ -371,9 +371,9 @@ pub struct Router {
 
 impl Router {
     fn load_rules(rules: &mut Vec<Rule>, routing_rules: &mut protobuf::RepeatedField<Router_Rule>) {
-        #[cfg(not(target_vendor = "uwp"))]
+        #[cfg(not(target_os = "windows"))]
         let mut mmdb_readers: HashMap<String, Arc<maxminddb::Reader<Mmap>>> = HashMap::new();
-        #[cfg(target_vendor = "uwp")]
+        #[cfg(target_os = "windows")]
         let mut mmdb_readers: HashMap<String, Arc<maxminddb::Reader<_>>> = HashMap::new();
         for rr in routing_rules.iter_mut() {
             let mut cond_and = ConditionAnd::new();
@@ -391,9 +391,9 @@ impl Router {
                     let reader = match mmdb_readers.get(&mmdb.file) {
                         Some(r) => r.clone(),
                         None => {
-                            #[cfg(not(target_vendor = "uwp"))]
+                            #[cfg(not(target_os = "windows"))]
                             let mmap_result = maxminddb::Reader::open_mmap(&mmdb.file);
-                            #[cfg(target_vendor = "uwp")]
+                            #[cfg(target_os = "windows")]
                             let mmap_result = (|| {
                                 use std::fs::File;
                                 use std::io::Read;

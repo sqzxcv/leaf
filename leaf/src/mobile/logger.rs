@@ -76,9 +76,9 @@ impl Write for ConsoleWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.clear();
         self.0.extend_from_slice(buf);
-        #[cfg(target_vendor = "uwp")]
+        #[cfg(target_os = "windows")]
         platform_log::log_out(&self.0[..]);
-        #[cfg(not(target_vendor = "uwp"))]
+        #[cfg(not(target_os = "windows"))]
         if let Some(i) = memchr::memchr(b'\n', &self.0) {
             platform_log::log_out(&self.0[..i]);
             let _ = self.0.split_to(i + 1);

@@ -148,7 +148,7 @@ pub extern "C" fn leaf_test_config(config_path: *const c_char) -> i32 {
     }
 }
 
-#[cfg(target_vendor = "uwp")]
+#[cfg(target_os = "windows")]
 #[no_mangle]
 pub extern "C" fn run_leaf(
     config_path: *const c_char,
@@ -205,7 +205,7 @@ pub extern "C" fn run_leaf(
     }
 }
 
-#[cfg(target_vendor = "uwp")]
+#[cfg(target_os = "windows")]
 #[no_mangle]
 pub extern "C" fn stop_leaf(runtime: *mut tokio::runtime::Runtime) {
     if runtime.is_null() {

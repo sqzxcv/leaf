@@ -7,7 +7,7 @@ mod network_listener;
         target_os = "android",
         target_os = "macos",
         target_os = "linux",
-        target_vendor = "uwp"
+        target_os = "windows"
     )
 ))]
 mod tun_listener;

@@ -49,7 +49,7 @@ pub fn setup_logger(config: &config::Log) -> Result<()> {
 
     match config.output {
         config::Log_Output::CONSOLE => {
-            #[cfg(any(target_os = "ios", target_os = "android", target_vendor = "uwp"))]
+            #[cfg(any(target_os = "ios", target_os = "android", target_os = "windows"))]
             {
                 let console_output = fern::Output::writer(
                     Box::new(crate::mobile::logger::ConsoleWriter::default()),
@@ -57,7 +57,7 @@ pub fn setup_logger(config: &config::Log) -> Result<()> {
                 );
                 dispatch = dispatch.chain(console_output);
             }
-            #[cfg(not(any(target_os = "ios", target_os = "android", target_vendor = "uwp")))]
+            #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "windows")))]
             {
                 dispatch = dispatch.chain(fern::Output::stdout("\n"));
             }

@@ -76,7 +76,7 @@ pub mod tryall;
         target_os = "android",
         target_os = "macos",
         target_os = "linux",
-        target_vendor = "uwp"
+        target_os = "windows"
     )
 ))]
 pub mod tun;

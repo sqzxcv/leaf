@@ -691,14 +691,14 @@ impl OutboundManager {
                         }
 
                         let mut selector = OutboundSelector::new(tag.clone(), actors);
-                        #[cfg(not(target_vendor = "uwp"))]
+                        #[cfg(not(target_os = "windows"))]
                         if let Ok(Some(selected)) = super::selector::get_selected_from_cache(&tag) {
                             // FIXME handle error
                             let _ = selector.set_selected(&selected);
                         } else {
                             let _ = selector.set_selected(&settings.actors[0]);
                         }
-                        #[cfg(target_vendor = "uwp")]
+                        #[cfg(target_os = "windows")]
                         let _ = selector.set_selected(&settings.actors[0]);
                         let selector = Arc::new(RwLock::new(selector));
 

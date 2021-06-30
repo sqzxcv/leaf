@@ -4,7 +4,7 @@
 ))]
 #[path = "inbound_tun.rs"]
 pub mod inbound;
-#[cfg(all(feature = "inbound-tun", target_vendor = "uwp"))]
+#[cfg(all(feature = "inbound-tun", target_os = "windows"))]
 #[path = "inbound_winrt.rs"]
 pub mod inbound;
 

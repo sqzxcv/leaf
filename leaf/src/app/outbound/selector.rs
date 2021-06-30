@@ -80,7 +80,7 @@ impl OutboundSelector {
     pub fn set_selected(&mut self, tag: &str) -> Result<()> {
         if self.handlers.contains_key(tag) {
             self.selected.replace(tag.to_string());
-            #[cfg(not(target_vendor = "uwp"))]
+            #[cfg(not(target_os = "windows"))]
             if let Err(e) = persist_selected_to_cache(self.id.clone(), tag.to_string()) {
                 log::warn!("persist selector state failed: {}", e);
             }
